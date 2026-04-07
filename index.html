@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Multiplayer TD Test</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; background: #e0e0e0; }
+        .screen { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 8px rgba(0,0,0,0.2); display: inline-block; margin-top: 50px; }
+        #lobby-screen, #game-screen { display: none; }
+        #playerList { margin: 20px 0; text-align: left; background: #f9f9f9; padding: 10px; border: 1px solid #ddd; }
+        .lobby-player { padding: 5px; border-bottom: 1px solid #eee; }
+        #ui-container { display: flex; justify-content: center; align-items: stretch; gap: 20px; margin-bottom: 10px; }
+        .info-box { background: white; padding: 10px 20px; border-radius: 8px; border: 2px solid #ccc; display: flex; flex-direction: column; justify-content: center;}
+        #wordDisplay { font-size: 32px; letter-spacing: 2px; color: #333; margin: 10px 0; font-family: monospace; }
+        #typeBox { font-size: 18px; padding: 5px; width: 250px; text-align: center; }
+        canvas { border: 2px solid black; background: #90EE90; cursor: crosshair; }
+        input, select, button { padding: 8px; margin: 5px; font-size: 16px; }
+        
+        .tower-btn { background: #eee; border: 2px solid #aaa; border-radius: 6px; padding: 5px; cursor: pointer; margin-bottom: 5px;}
+        .tower-btn.active { border-color: #2196F3; background: #e3f2fd; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <div id="arcade-screen" class="screen">
+        <h1>Welcome to Coding TD!</h1>
+        <label>Your Name:</label><br>
+        <input type="text" id="arcadeNameInput" placeholder="Enter your name"><br><br>
+        <label>Room Code:</label><br>
+        <input type="text" id="arcadeRoomInput" placeholder="e.g. MATH1"><br><br>
+        <button id="joinRoomBtn" style="cursor: pointer; background: #4CAF50; color: white; border: none; border-radius: 4px;">Join Room</button>
+        <p id="roomErrorMsg" style="color: red;"></p>
+    </div>
+
+    <div id="lobby-screen" class="screen">
+        <h2>Room: <span id="displayRoomCode"></span></h2>
+        <label>Pick Color:</label>
+        <select id="playerColorInput">
+            <option value="blue">Blue</option>
+            <option value="red">Red</option>
+            <option value="green">Green</option>
+            <option value="purple">Purple</option>
+            <option value="orange">Orange</option>
+            <option value="hotpink">Pink</option>
+        </select><br><br>
+        <button id="readyBtn" style="cursor: pointer;">Ready Up!</button>
+        <div id="playerList">
+            <h3>Connected Players:</h3>
+            <div id="lobbyPlayersContainer"></div>
+        </div>
+    </div>
+
+    <div id="game-screen">
+        <div id="ui-container">
+            <div class="info-box" style="text-align: left;">
+                <strong>Units:</strong><br>
+                [1] Scout: 1 pt<br>
+                [2] Bruiser: 3 pts<br>
+                [3] Tank: 5 pts
+            </div>
+            <div class="info-box">
+                <h3 style="margin: 0;">Bank: <span id="pointDisplay" style="color: green; font-size: 1.5em;">0</span> pts</h3>
+                <h2 id="wordDisplay">Loading...</h2>
+                <input type="text" id="typeBox" placeholder="Type word or 1,2,3..." autocomplete="off">
+            </div>
+            <div class="info-box" id="tower-shop">
+                <strong>Defenses:</strong><br>
+                <div class="tower-btn active" data-type="basic" data-range="100">
+                    Basic Tower (10 pts)
+                </div>
+                <div class="tower-btn" data-type="aoe" data-range="80">
+                    AOE Pulse (25 pts)
+                </div>
+            </div>
+        </div>
+        <canvas id="gameCanvas" width="600" height="600"></canvas>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        
+        const arcadeScreen = document.getElementById('arcade-screen');
+        const lobbyScreen = document.getElementById('lobby-screen');
+        const gameScreen = document.getElementById('game-screen');
+        
+        const arcadeNameInput = document.getElementById('arcadeNameInput');
+        const arcadeRoomInput = document.getElementById('arcadeRoomInput');
+        const joinRoomBtn = document.getElementById('joinRoomBtn');
+        const roomErrorMsg = document.getElementById('roomErrorMsg');
+        const displayRoomCode = document.getElementById('displayRoomCode');
+
+        const playerColorInput = document.getElementById('playerColorInput');
+        const readyBtn = document.getElementById('readyBtn');
+        const lobbyPlayersContainer = document.getElementById('lobbyPlayersContainer');
+        
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const typeBox = document.getElementById('typeBox');
+        const wordDisplay = document.getElementById('wordDisplay');
+        const pointDisplay = document.getElementById('pointDisplay');
+
+        const towerBtns = document.querySelectorAll('.tower-btn');
+        let selectedTowerType = 'basic';
+        let selectedTowerRange = 100;
+        let mouseX = -1000, mouseY = -1000;
+        let isHovering = false;
+
+        towerBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                towerBtns.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                selectedTowerType = btn.dataset.type;
+                selectedTowerRange = parseInt(btn.dataset.range);
+                typeBox.focus(); 
+            });
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = e.clientX - rect.left;
+            mouseY = e.clientY - rect.top;
+        });
+        canvas.addEventListener('mouseenter', () => isHovering = true);
+        canvas.addEventListener('mouseleave', () => isHovering = false);
+
+        let myId = null;
+        let localPlayers = {}; 
+        let localCreepers = {};
+        let localTowers = [];
+        let localLasers = [];
+        let localAoeBlasts = [];
+        let localBases = { 0: 10, 1: 10 }; 
+        let waypoints = [];
+        const TILE_SIZE = 10;
+        let gameLoopId;
+
+        socket.on('connect', () => { myId = socket.id; });
+
+        joinRoomBtn.addEventListener('click', () => {
+            const name = arcadeNameInput.value.trim();
+            const roomCode = arcadeRoomInput.value.trim();
+            if (name && roomCode) socket.emit('joinRoom', { name, roomCode });
+            else roomErrorMsg.innerText = "Please enter name and room code.";
+        });
+
+        socket.on('roomError', (msg) => { roomErrorMsg.innerText = msg; });
+        socket.on('roomJoined', (data) => {
+            arcadeScreen.style.display = 'none';
+            lobbyScreen.style.display = 'inline-block';
+            displayRoomCode.innerText = data.roomCode;
+        });
+
+        readyBtn.addEventListener('click', () => {
+            socket.emit('playerReady', { color: playerColorInput.value });
+            readyBtn.disabled = true;
+            readyBtn.innerText = 'Waiting...';
+            playerColorInput.disabled = true;
+        });
+
+        socket.on('lobbyUpdate', (playersData) => {
+            localPlayers = playersData;
+            lobbyPlayersContainer.innerHTML = '';
+            let takenColors = [];
+            for (let id in playersData) {
+                let p = playersData[id];
+                let status = p.isReady ? '✅ Ready' : '⏳ Waiting';
+                let displayColor = p.isReady ? p.color : '#333'; 
+                lobbyPlayersContainer.innerHTML += `<div class="lobby-player"><strong style="color:${displayColor}">${p.name}</strong> - ${status}</div>`;
+                if (id !== myId && p.isReady) takenColors.push(p.color);
+            }
+            Array.from(playerColorInput.options).forEach(opt => {
+                if (takenColors.includes(opt.value)) {
+                    opt.disabled = true;
+                    if (playerColorInput.value === opt.value) {
+                        let firstAvail = Array.from(playerColorInput.options).find(o => !o.disabled);
+                        playerColorInput.value = firstAvail ? firstAvail.value : opt.value;
+                    }
+                } else opt.disabled = false;
+            });
+        });
+
+        socket.on('gameStart', () => {
+            lobbyScreen.style.display = 'none';
+            gameScreen.style.display = 'block';
+            typeBox.focus(); 
+            draw(); 
+        });
+
+        socket.on('gameOver', (data) => {
+            alert(data.winner + ' Wins! Click OK to return to the Lobby for a rematch.');
+            lobbyScreen.style.display = 'inline-block';
+            gameScreen.style.display = 'none';
+            readyBtn.disabled = false;
+            readyBtn.innerText = 'Ready Up!';
+            playerColorInput.disabled = false;
+            cancelAnimationFrame(gameLoopId);
+        });
+
+        socket.on('newWord', (word) => { wordDisplay.innerText = word; });
+        socket.on('initMap', (data) => { waypoints = data.waypoints; });
+
+        socket.on('stateUpdate', (serverData) => {
+            localCreepers = serverData.creepers;
+            localTowers = serverData.towers;
+            localLasers = serverData.lasers;
+            localAoeBlasts = serverData.aoeBlasts; 
+            localBases = serverData.bases; 
+            localPlayers = serverData.players;
+            if (myId && serverData.players[myId]) pointDisplay.innerText = serverData.players[myId].points;
+        });
+
+        canvas.addEventListener('mousedown', (e) => {
+            socket.emit('placeTower', { x: mouseX, y: mouseY, towerType: selectedTowerType });
+            setTimeout(() => { typeBox.focus(); }, 10);
+            e.preventDefault(); 
+        });
+
+        function drawMap() {
+            ctx.strokeStyle = '#a8e6a8'; ctx.lineWidth = 1;
+            for(let i = 0; i <= 600; i += TILE_SIZE) {
+                ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, 600); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(600, i); ctx.stroke();
+            }
+
+            if (waypoints.length > 0) {
+                ctx.strokeStyle = '#d3b88c'; ctx.lineWidth = TILE_SIZE; ctx.lineCap = 'square'; ctx.lineJoin = 'miter';
+                ctx.beginPath(); ctx.moveTo(waypoints[0].col * TILE_SIZE + TILE_SIZE/2, waypoints[0].row * TILE_SIZE + TILE_SIZE/2);
+                for(let i = 1; i < waypoints.length; i++) ctx.lineTo(waypoints[i].col * TILE_SIZE + TILE_SIZE/2, waypoints[i].row * TILE_SIZE + TILE_SIZE/2);
+                ctx.stroke();
+                
+                ctx.strokeStyle = 'rgba(0,0,0,0.1)'; ctx.beginPath(); ctx.moveTo(300, 0); ctx.lineTo(300, 600); ctx.stroke();
+
+                let b0Color = 'gray', b1Color = 'gray';
+                let b0Name = 'Waiting...', b1Name = 'Waiting...';
+                
+                for (let id in localPlayers) {
+                    if (localPlayers[id].team === 0) {
+                        b0Color = localPlayers[id].color;
+                        b0Name = localPlayers[id].name;
+                    }
+                    if (localPlayers[id].team === 1) {
+                        b1Color = localPlayers[id].color;
+                        b1Name = localPlayers[id].name;
+                    }
+                }
+
+                // DRAW LEFT BASE
+                let b1X = waypoints[0].col * TILE_SIZE - TILE_SIZE; 
+                let b1Y = waypoints[0].row * TILE_SIZE - TILE_SIZE;
+                ctx.fillStyle = b0Color; ctx.fillRect(b1X, b1Y, TILE_SIZE*3, TILE_SIZE*3);
+                
+                // Draw Base HP
+                ctx.fillStyle = 'white'; ctx.font = '14px Arial'; ctx.textAlign = 'center'; 
+                ctx.fillText(localBases[0], b1X + 15, b1Y + 20);
+                
+                // Draw Player 0 Name ABOVE Base
+                ctx.fillStyle = '#333'; ctx.font = '14px Arial';
+                ctx.fillText(b0Name, b1X + 15, b1Y - 10);
+                
+                // DRAW RIGHT BASE
+                let b2X = waypoints[waypoints.length-1].col * TILE_SIZE - TILE_SIZE; 
+                let b2Y = waypoints[waypoints.length-1].row * TILE_SIZE - TILE_SIZE;
+                ctx.fillStyle = b1Color; ctx.fillRect(b2X, b2Y, TILE_SIZE*3, TILE_SIZE*3);
+                
+                // Draw Base HP
+                ctx.fillStyle = 'white'; 
+                ctx.fillText(localBases[1], b2X + 15, b2Y + 20);
+                
+                // Draw Player 1 Name ABOVE Base
+                ctx.fillStyle = '#333'; 
+                ctx.fillText(b1Name, b2X + 15, b2Y - 10);
+                
+                ctx.textAlign = 'left'; // Reset text align to default!
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawMap();
+            
+            // DRAW TOWERS (Names have been removed!)
+            localTowers.forEach(t => {
+                ctx.fillStyle = '#444'; ctx.fillRect(t.x - 10, t.y - 10, 20, 20);
+                ctx.fillStyle = t.color;
+                if (t.type === 'single') {
+                    ctx.beginPath(); ctx.arc(t.x, t.y, 6, 0, Math.PI * 2); ctx.fill();
+                } else {
+                    ctx.fillRect(t.x - 6, t.y - 6, 12, 12);
+                }
+            });
+
+            // DRAW LASERS & AOE BLASTS
+            ctx.lineWidth = 3;
+            localLasers.forEach(l => {
+                ctx.strokeStyle = l.color; ctx.beginPath(); ctx.moveTo(l.startX, l.startY); ctx.lineTo(l.endX, l.endY); ctx.stroke();
+            });
+            localAoeBlasts.forEach(b => {
+                ctx.fillStyle = b.color;
+                ctx.globalAlpha = b.life / 30; 
+                ctx.beginPath(); ctx.arc(b.x, b.y, b.range, 0, Math.PI * 2); ctx.fill();
+                ctx.globalAlpha = 1.0; 
+            });
+
+            // DRAW CREEPERS
+            for (let id in localCreepers) {
+                const c = localCreepers[id];
+                ctx.fillStyle = c.color; ctx.fillRect(c.x - c.size/2, c.y - c.size/2, c.size, c.size); 
+                ctx.fillStyle = 'white'; ctx.font = '10px Arial'; ctx.fillText(c.hp, c.x - 3, c.y + 4);
+            }
+
+            // DRAW HOVER PREVIEW
+            if (isHovering) {
+                let myTeam = localPlayers[myId] ? localPlayers[myId].team : 0;
+                let isValidSide = (myTeam === 0 && mouseX < 300) || (myTeam === 1 && mouseX > 300);
+                
+                ctx.fillStyle = isValidSide ? 'rgba(255, 255, 255, 0.3)' : 'rgba(255, 0, 0, 0.2)';
+                ctx.beginPath();
+                ctx.arc(mouseX, mouseY, selectedTowerRange, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = 'rgba(100, 100, 100, 0.5)';
+                ctx.fillRect(mouseX - 10, mouseY - 10, 20, 20);
+            }
+
+            gameLoopId = requestAnimationFrame(draw);
+        }
+
+        typeBox.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') { socket.emit('submitWord', typeBox.value.trim()); typeBox.value = ''; }
+        });
+    </script>
+</body>
+</html>
