@@ -17,6 +17,7 @@
         
         .tower-btn { background: #eee; border: 2px solid #aaa; border-radius: 6px; padding: 5px; cursor: pointer; margin-bottom: 5px;}
         .tower-btn.active { border-color: #2196F3; background: #e3f2fd; font-weight: bold; }
+        .menu-section { background: #f4f4f4; padding: 15px; border-radius: 8px; margin: 15px 0; border: 1px solid #ddd;}
     </style>
 </head>
 <body>
@@ -24,15 +25,26 @@
     <div id="arcade-screen" class="screen">
         <h1>Welcome to Coding TD!</h1>
         <label>Your Name:</label><br>
-        <input type="text" id="arcadeNameInput" placeholder="Enter your name"><br><br>
-        <label>Room Code:</label><br>
-        <input type="text" id="arcadeRoomInput" placeholder="e.g. MATH1"><br><br>
-        <button id="joinRoomBtn" style="cursor: pointer; background: #4CAF50; color: white; border: none; border-radius: 4px;">Join Room</button>
+        <input type="text" id="arcadeNameInput" placeholder="Enter your name"><br>
+        
+        <div class="menu-section">
+            <label><strong>Play with a Friend:</strong></label><br>
+            <input type="text" id="arcadeRoomInput" placeholder="e.g. MATH1"><br>
+            <button id="joinRoomBtn" style="cursor: pointer; background: #4CAF50; color: white; border: none; border-radius: 4px;">Join Private Room</button>
+        </div>
+        
+        <p style="font-weight: bold; margin: 0;">OR</p>
+        
+        <div class="menu-section" style="background: #e3f2fd; border-color: #bbdefb;">
+            <label><strong>Play with Anyone:</strong></label><br>
+            <button id="randomMatchBtn" style="cursor: pointer; background: #2196F3; color: white; border: none; border-radius: 4px; font-weight: bold;">Find Random Match</button>
+        </div>
+
         <p id="roomErrorMsg" style="color: red;"></p>
     </div>
 
     <div id="lobby-screen" class="screen">
-        <h2>Room: <span id="displayRoomCode"></span></h2>
+        <h2>Room: <span id="displayRoomCode"></span> <span id="publicBadge" style="font-size: 0.5em; background: #2196F3; color: white; padding: 3px 8px; border-radius: 12px; vertical-align: middle; display: none;">PUBLIC</span></h2>
         <label>Pick Color:</label>
         <select id="playerColorInput">
             <option value="blue">Blue</option>
@@ -41,6 +53,12 @@
             <option value="purple">Purple</option>
             <option value="orange">Orange</option>
             <option value="hotpink">Pink</option>
+        </select><br><br>
+        <label>Difficulty:</label>
+        <select id="roomDifficultyInput">
+            <option value="easy">Easy (Slower, 1 Pt/Word)</option>
+            <option value="medium" selected>Medium (Standard, 2 Pts/Word)</option>
+            <option value="hard">Hard (Faster, 4 Pts/Word)</option>
         </select><br><br>
         <button id="readyBtn" style="cursor: pointer;">Ready Up!</button>
         <div id="playerList">
@@ -86,10 +104,13 @@
         const arcadeNameInput = document.getElementById('arcadeNameInput');
         const arcadeRoomInput = document.getElementById('arcadeRoomInput');
         const joinRoomBtn = document.getElementById('joinRoomBtn');
+        const randomMatchBtn = document.getElementById('randomMatchBtn');
         const roomErrorMsg = document.getElementById('roomErrorMsg');
         const displayRoomCode = document.getElementById('displayRoomCode');
+        const publicBadge = document.getElementById('publicBadge');
 
         const playerColorInput = document.getElementById('playerColorInput');
+        const roomDifficultyInput = document.getElementById('roomDifficultyInput');
         const readyBtn = document.getElementById('readyBtn');
         const lobbyPlayersContainer = document.getElementById('lobbyPlayersContainer');
         
@@ -123,12 +144,21 @@
         canvas.addEventListener('mouseenter', () => isHovering = true);
         canvas.addEventListener('mouseleave', () => isHovering = false);
 
+        roomDifficultyInput.addEventListener('change', (e) => {
+            socket.emit('changeDifficulty', e.target.value);
+        });
+
+        socket.on('difficultyUpdated', (newDiff) => {
+            roomDifficultyInput.value = newDiff;
+        });
+
         let myId = null;
         let localPlayers = {}; 
         let localCreepers = {};
         let localTowers = [];
         let localLasers = [];
         let localAoeBlasts = [];
+        let localParticles = []; // <--- NEW: Client-side particle array
         let localBases = { 0: 10, 1: 10 }; 
         let waypoints = [];
         const TILE_SIZE = 10;
@@ -139,15 +169,37 @@
         joinRoomBtn.addEventListener('click', () => {
             const name = arcadeNameInput.value.trim();
             const roomCode = arcadeRoomInput.value.trim();
-            if (name && roomCode) socket.emit('joinRoom', { name, roomCode });
+            if (name && roomCode) {
+                socket.emit('joinRoom', { name, roomCode });
+                roomErrorMsg.innerText = "";
+            }
             else roomErrorMsg.innerText = "Please enter name and room code.";
         });
 
-        socket.on('roomError', (msg) => { roomErrorMsg.innerText = msg; });
+        randomMatchBtn.addEventListener('click', () => {
+            const name = arcadeNameInput.value.trim();
+            if (name) {
+                socket.emit('randomMatch', { name });
+                roomErrorMsg.style.color = "black";
+                roomErrorMsg.innerText = "Searching for a match...";
+            } else {
+                roomErrorMsg.style.color = "red";
+                roomErrorMsg.innerText = "Please enter your name first.";
+            }
+        });
+
+        socket.on('roomError', (msg) => { 
+            roomErrorMsg.style.color = "red";
+            roomErrorMsg.innerText = msg; 
+        });
+
         socket.on('roomJoined', (data) => {
             arcadeScreen.style.display = 'none';
             lobbyScreen.style.display = 'inline-block';
             displayRoomCode.innerText = data.roomCode;
+            
+            if (data.isPublic) publicBadge.style.display = 'inline-block';
+            else publicBadge.style.display = 'none';
         });
 
         readyBtn.addEventListener('click', () => {
@@ -155,6 +207,7 @@
             readyBtn.disabled = true;
             readyBtn.innerText = 'Waiting...';
             playerColorInput.disabled = true;
+            roomDifficultyInput.disabled = true;
         });
 
         socket.on('lobbyUpdate', (playersData) => {
@@ -182,6 +235,7 @@
         socket.on('gameStart', () => {
             lobbyScreen.style.display = 'none';
             gameScreen.style.display = 'block';
+            localParticles = []; // Clear particles on restart
             typeBox.focus(); 
             draw(); 
         });
@@ -193,6 +247,7 @@
             readyBtn.disabled = false;
             readyBtn.innerText = 'Ready Up!';
             playerColorInput.disabled = false;
+            roomDifficultyInput.disabled = false;
             cancelAnimationFrame(gameLoopId);
         });
 
@@ -200,13 +255,43 @@
         socket.on('initMap', (data) => { waypoints = data.waypoints; });
 
         socket.on('stateUpdate', (serverData) => {
+            // --- HANDLE FADE IN SPAWN TIMES ---
+            for (let id in serverData.creepers) {
+                if (!localCreepers[id]) {
+                    // It's a new creeper! Tag it with the exact time we saw it
+                    serverData.creepers[id].spawnTime = Date.now();
+                } else {
+                    // Carry over the existing spawn time so it doesn't reset
+                    serverData.creepers[id].spawnTime = localCreepers[id].spawnTime;
+                }
+            }
+
             localCreepers = serverData.creepers;
             localTowers = serverData.towers;
             localLasers = serverData.lasers;
             localAoeBlasts = serverData.aoeBlasts; 
             localBases = serverData.bases; 
             localPlayers = serverData.players;
+            
             if (myId && serverData.players[myId]) pointDisplay.innerText = serverData.players[myId].points;
+
+            // --- HANDLE DEATH PARTICLES ---
+            if (serverData.deaths && serverData.deaths.length > 0) {
+                serverData.deaths.forEach(death => {
+                    let particleCount = 10 + Math.floor(Math.random() * 8); // 10 to 18 blocks
+                    for(let i=0; i<particleCount; i++) {
+                        localParticles.push({
+                            x: death.x, 
+                            y: death.y,
+                            vx: (Math.random() - 0.5) * 8, // Burst velocity
+                            vy: (Math.random() - 0.5) * 8,
+                            life: 1.0,
+                            color: death.color,
+                            size: 2 + Math.random() * 4 // Small little chunks
+                        });
+                    }
+                });
+            }
         });
 
         canvas.addEventListener('mousedown', (e) => {
@@ -244,33 +329,27 @@
                     }
                 }
 
-                // DRAW LEFT BASE
                 let b1X = waypoints[0].col * TILE_SIZE - TILE_SIZE; 
                 let b1Y = waypoints[0].row * TILE_SIZE - TILE_SIZE;
                 ctx.fillStyle = b0Color; ctx.fillRect(b1X, b1Y, TILE_SIZE*3, TILE_SIZE*3);
                 
-                // Draw Base HP
                 ctx.fillStyle = 'white'; ctx.font = '14px Arial'; ctx.textAlign = 'center'; 
                 ctx.fillText(localBases[0], b1X + 15, b1Y + 20);
                 
-                // Draw Player 0 Name ABOVE Base
                 ctx.fillStyle = '#333'; ctx.font = '14px Arial';
                 ctx.fillText(b0Name, b1X + 15, b1Y - 10);
                 
-                // DRAW RIGHT BASE
                 let b2X = waypoints[waypoints.length-1].col * TILE_SIZE - TILE_SIZE; 
                 let b2Y = waypoints[waypoints.length-1].row * TILE_SIZE - TILE_SIZE;
                 ctx.fillStyle = b1Color; ctx.fillRect(b2X, b2Y, TILE_SIZE*3, TILE_SIZE*3);
                 
-                // Draw Base HP
                 ctx.fillStyle = 'white'; 
                 ctx.fillText(localBases[1], b2X + 15, b2Y + 20);
                 
-                // Draw Player 1 Name ABOVE Base
                 ctx.fillStyle = '#333'; 
                 ctx.fillText(b1Name, b2X + 15, b2Y - 10);
                 
-                ctx.textAlign = 'left'; // Reset text align to default!
+                ctx.textAlign = 'left'; 
             }
         }
 
@@ -278,7 +357,6 @@
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             drawMap();
             
-            // DRAW TOWERS (Names have been removed!)
             localTowers.forEach(t => {
                 ctx.fillStyle = '#444'; ctx.fillRect(t.x - 10, t.y - 10, 20, 20);
                 ctx.fillStyle = t.color;
@@ -289,7 +367,6 @@
                 }
             });
 
-            // DRAW LASERS & AOE BLASTS
             ctx.lineWidth = 3;
             localLasers.forEach(l => {
                 ctx.strokeStyle = l.color; ctx.beginPath(); ctx.moveTo(l.startX, l.startY); ctx.lineTo(l.endX, l.endY); ctx.stroke();
@@ -301,14 +378,45 @@
                 ctx.globalAlpha = 1.0; 
             });
 
-            // DRAW CREEPERS
+            // --- DRAW PARTICLES ---
+            for(let i = localParticles.length - 1; i >= 0; i--) {
+                let p = localParticles[i];
+                
+                // Add velocity to position
+                p.x += p.vx;
+                p.y += p.vy;
+                
+                // Add friction so they slow down beautifully
+                p.vx *= 0.9; 
+                p.vy *= 0.9;
+
+                p.life -= 0.04; // Fade out slightly every frame
+                
+                if (p.life <= 0) {
+                    localParticles.splice(i, 1);
+                } else {
+                    ctx.globalAlpha = p.life;
+                    ctx.fillStyle = p.color;
+                    ctx.fillRect(p.x, p.y, p.size, p.size);
+                }
+            }
+            ctx.globalAlpha = 1.0; // Always reset alpha!
+
+            // --- DRAW CREEPERS ---
             for (let id in localCreepers) {
                 const c = localCreepers[id];
+                
+                // Calculate how long it has been alive
+                let age = Date.now() - (c.spawnTime || Date.now());
+                
+                // Fade it in over 300 milliseconds
+                ctx.globalAlpha = Math.min(1.0, age / 300); 
+
                 ctx.fillStyle = c.color; ctx.fillRect(c.x - c.size/2, c.y - c.size/2, c.size, c.size); 
                 ctx.fillStyle = 'white'; ctx.font = '10px Arial'; ctx.fillText(c.hp, c.x - 3, c.y + 4);
             }
+            ctx.globalAlpha = 1.0; // Always reset alpha!
 
-            // DRAW HOVER PREVIEW
             if (isHovering) {
                 let myTeam = localPlayers[myId] ? localPlayers[myId].team : 0;
                 let isValidSide = (myTeam === 0 && mouseX < 300) || (myTeam === 1 && mouseX > 300);

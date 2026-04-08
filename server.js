@@ -8,18 +8,30 @@ const io = new Server(server);
 
 let rooms = {};
 
-const wordList = [
-    "algorithm", "binary", "compiler", "debug", "execute", 
-    "function", "gateway", "hardware", "iteration", "javascript", 
-    "kernel", "logic", "macro", "network", "object", 
-    "pixel", "query", "router", "syntax", "variable"
-];
+const wordBanks = {
+    easy: {
+        points: 1, speedMultiplier: 0.6,
+        words: ["bug", "tag", "ram", "cpu", "bot", "run", "log", "net", "web", "app", "bit", "mac", "html", "pixel", "key", "enter", "mouse"]
+    },
+    medium: {
+        points: 2, speedMultiplier: 1.0,
+        words: ["server", "client", "python", "object", "array", "syntax", "kernel", "router", "binary", "computer", "C#", "motherboard"]
+    },
+    hard: {
+        points: 4,  speedMultiplier: 1.2, 
+        words: ["algorithm", "javascript", "encryption", "middleware", "framework", "deployment", "repository", "parallax", "cache", "cryptography", "asynchronous", "infrastructure"]
+    }
+};
 
-function getRandomWord() { return wordList[Math.floor(Math.random() * wordList.length)]; }
+function getRandomWord(difficulty) { 
+    const list = wordBanks[difficulty].words;
+    return list[Math.floor(Math.random() * list.length)]; 
+}
 
-const mapWaypoints = [
-    { col: 5, row: 55 }, { col: 30, row: 55 }, 
-    { col: 30, row: 5 }, { col: 55, row: 5 }   
+const mapPool = [
+    [ { col: 5, row: 55 }, { col: 30, row: 55 }, { col: 30, row: 5 }, { col: 55, row: 5 } ],
+    [ { col: 5, row: 20 }, { col: 25, row: 20 }, { col: 25, row: 50 }, { col: 35, row: 50 }, { col: 35, row: 20 }, { col: 55, row: 20 } ],
+    [ { col: 5, row: 10 }, { col: 20, row: 10 }, { col: 20, row: 30 }, { col: 40, row: 30 }, { col: 40, row: 50 }, { col: 55, row: 50 } ]
 ];
 
 const TILE_SIZE = 10;
@@ -37,42 +49,59 @@ const towerStats = {
 
 app.get('/', (req, res) => { res.sendFile(__dirname + '/index.html'); });
 
+function addPlayerToRoom(socket, roomCode, playerName, isPublic = false) {
+    if (!rooms[roomCode]) {
+        rooms[roomCode] = {
+            gameState: 'waiting', 
+            difficulty: 'medium', 
+            mapIndex: Math.floor(Math.random() * mapPool.length), 
+            players: {}, creepers: {}, towers: [], 
+            lasers: [], aoeBlasts: [], deathEvents: [], // <--- Added deathEvents array
+            bases: { 0: 10, 1: 10 }, creeperIdCounter: 0,
+            isPublic: isPublic
+        };
+    }
+
+    let room = rooms[roomCode];
+    let pIds = Object.keys(room.players);
+
+    if (pIds.length >= 2) return socket.emit('roomError', 'Room is full!');
+
+    let assignedTeam = 0;
+    if (pIds.length === 1) {
+        let existingTeam = room.players[pIds[0]].team;
+        assignedTeam = existingTeam === 0 ? 1 : 0;
+    }
+
+    room.players[socket.id] = {
+        id: socket.id, name: playerName, team: assignedTeam, color: 'gray', 
+        currentWord: getRandomWord(room.difficulty), points: 0, isReady: false
+    };
+
+    socket.roomCode = roomCode;
+    socket.join(roomCode);
+    socket.emit('roomJoined', { roomCode: roomCode, isPublic: isPublic });
+    socket.emit('initMap', { waypoints: mapPool[room.mapIndex] });
+    io.to(roomCode).emit('lobbyUpdate', room.players); 
+}
+
 io.on('connection', (socket) => {
     socket.on('joinRoom', (data) => {
         let roomCode = data.roomCode.toUpperCase();
         let playerName = data.name || "Anonymous";
+        addPlayerToRoom(socket, roomCode, playerName, false);
+    });
 
-        if (!rooms[roomCode]) {
-            rooms[roomCode] = {
-                gameState: 'waiting', players: {}, creepers: {}, towers: [], 
-                lasers: [], aoeBlasts: [], 
-                bases: { 0: 10, 1: 10 }, creeperIdCounter: 0
-            };
+    socket.on('randomMatch', (data) => {
+        let playerName = data.name || "Anonymous";
+        let foundRoom = null;
+        for (let code in rooms) {
+            if (rooms[code].isPublic && rooms[code].gameState === 'waiting' && Object.keys(rooms[code].players).length === 1) {
+                foundRoom = code; break;
+            }
         }
-
-        let room = rooms[roomCode];
-        let pIds = Object.keys(room.players);
-
-        if (pIds.length >= 2) return socket.emit('roomError', 'Room is full!');
-
-        // --- BUG FIX: Smarter Team Assignment ---
-        let assignedTeam = 0;
-        if (pIds.length === 1) {
-            // Give the new player the opposite team of whoever is already in the room
-            let existingTeam = room.players[pIds[0]].team;
-            assignedTeam = existingTeam === 0 ? 1 : 0;
-        }
-
-        room.players[socket.id] = {
-            id: socket.id, name: playerName, team: assignedTeam, color: 'gray', 
-            currentWord: getRandomWord(), points: 0, isReady: false
-        };
-
-        socket.roomCode = roomCode;
-        socket.join(roomCode);
-        socket.emit('roomJoined', { roomCode: roomCode });
-        socket.emit('initMap', { waypoints: mapWaypoints });
-        io.to(roomCode).emit('lobbyUpdate', room.players); 
+        if (foundRoom) addPlayerToRoom(socket, foundRoom, playerName, true);
+        else addPlayerToRoom(socket, "RAND-" + Math.floor(1000 + Math.random() * 9000), playerName, true);
     });
 
     socket.on('playerReady', (data) => {
@@ -100,6 +129,15 @@ io.on('connection', (socket) => {
         }
     });
 
+    socket.on('changeDifficulty', (newDifficulty) => {
+        let roomCode = socket.roomCode;
+        if (roomCode && rooms[roomCode] && rooms[roomCode].gameState === 'waiting') {
+            rooms[roomCode].difficulty = newDifficulty;
+            for (let id in rooms[roomCode].players) rooms[roomCode].players[id].currentWord = getRandomWord(newDifficulty);
+            io.to(roomCode).emit('difficultyUpdated', newDifficulty);
+        }
+    });
+
     socket.on('placeTower', (data) => {
         let roomCode = socket.roomCode;
         if (!roomCode || !rooms[roomCode]) return;
@@ -118,10 +156,8 @@ io.on('connection', (socket) => {
             if (validSide) {
                 p.points -= stats.cost;
                 room.towers.push({
-                    owner: socket.id, team: p.team, color: p.color,
-                    x: data.x, y: data.y,
-                    range: stats.range, damage: stats.damage, 
-                    cooldown: stats.cooldown, timer: 0, type: stats.type
+                    owner: socket.id, team: p.team, color: p.color, x: data.x, y: data.y,
+                    range: stats.range, damage: stats.damage, cooldown: stats.cooldown, timer: 0, type: stats.type
                 });
             }
         }
@@ -139,21 +175,29 @@ io.on('connection', (socket) => {
             let stats = unitStats[typedWord];
             if (p.points >= stats.cost) {
                 p.points -= stats.cost; 
-                let startWpIndex = p.team === 0 ? 0 : 3;
-                let nextWpIndex = p.team === 0 ? 1 : 2;
+                
+                let mapWps = mapPool[room.mapIndex];
+                let lastWpIndex = mapWps.length - 1;
+                
+                let startWpIndex = p.team === 0 ? 0 : lastWpIndex;
+                let nextWpIndex = p.team === 0 ? 1 : lastWpIndex - 1;
                 let direction = p.team === 0 ? 1 : -1;
-                let startX = mapWaypoints[startWpIndex].col * TILE_SIZE + (TILE_SIZE / 2);
-                let startY = mapWaypoints[startWpIndex].row * TILE_SIZE + (TILE_SIZE / 2);
+                
+                let startX = mapWps[startWpIndex].col * TILE_SIZE + (TILE_SIZE / 2);
+                let startY = mapWps[startWpIndex].row * TILE_SIZE + (TILE_SIZE / 2);
+
+                let speedMult = wordBanks[room.difficulty].speedMultiplier;
 
                 room.creepers[room.creeperIdCounter++] = {
                     owner: socket.id, team: p.team, color: p.color, x: startX, y: startY,
-                    targetIndex: nextWpIndex, direction: direction, hp: stats.hp, speed: stats.speed, size: stats.size
+                    targetIndex: nextWpIndex, direction: direction, hp: stats.hp, 
+                    speed: stats.speed * speedMult, size: stats.size
                 };
             }
         } 
         else if (typedWord.toLowerCase() === p.currentWord.toLowerCase()) {
-            p.points += 1; 
-            p.currentWord = getRandomWord();
+            p.points += wordBanks[room.difficulty].points; 
+            p.currentWord = getRandomWord(room.difficulty);
             socket.emit('newWord', p.currentWord);
         }
     });
@@ -172,6 +216,8 @@ setInterval(() => {
     for (let roomCode in rooms) {
         let room = rooms[roomCode];
         if (room.gameState !== 'playing') continue; 
+        
+        let mapWps = mapPool[room.mapIndex]; 
 
         room.lasers = [];
         room.aoeBlasts.forEach(b => b.life--);
@@ -179,7 +225,6 @@ setInterval(() => {
 
         room.towers.forEach(tower => {
             if (tower.timer > 0) tower.timer--; 
-            
             if (tower.timer === 0) {
                 if (tower.type === 'single') {
                     let targetId = null, closestDist = tower.range;
@@ -195,8 +240,8 @@ setInterval(() => {
                         target.hp -= tower.damage;
                         tower.timer = tower.cooldown;
                         room.lasers.push({ startX: tower.x, startY: tower.y, endX: target.x, endY: target.y, color: tower.color });
-                        
                         if (target.hp <= 0) {
+                            room.deathEvents.push({x: target.x, y: target.y, color: target.color}); // <--- Log Death
                             delete room.creepers[targetId];
                             if (room.players[tower.owner]) room.players[tower.owner].points += 1;
                         }
@@ -209,9 +254,9 @@ setInterval(() => {
                         if (c.team !== tower.team) {
                             let dist = Math.hypot(c.x - tower.x, c.y - tower.y);
                             if (dist <= tower.range) {
-                                hitSomething = true;
-                                c.hp -= tower.damage;
+                                hitSomething = true; c.hp -= tower.damage;
                                 if (c.hp <= 0) {
+                                    room.deathEvents.push({x: c.x, y: c.y, color: c.color}); // <--- Log Death
                                     delete room.creepers[cid];
                                     if (room.players[tower.owner]) room.players[tower.owner].points += 1;
                                 }
@@ -228,26 +273,23 @@ setInterval(() => {
 
         for (let id in room.creepers) {
             let c = room.creepers[id];
-            let targetWp = mapWaypoints[c.targetIndex];
+            let targetWp = mapWps[c.targetIndex]; 
 
             if (!targetWp) {
                 let enemyTeam = c.team === 0 ? 1 : 0;
                 room.bases[enemyTeam] -= c.hp; 
-                
-                // --- NEW: CREEPER BOUNTY ---
-                // Give owner points equal to the exact damage they did to the base!
-                if (room.players[c.owner]) {
-                    room.players[c.owner].points += c.hp; 
-                }
-
+                if (room.players[c.owner]) room.players[c.owner].points += c.hp; 
                 delete room.creepers[id]; 
 
                 if (room.bases[enemyTeam] <= 0) {
                     let winnerName = room.players[c.owner] ? room.players[c.owner].name : "Someone";
                     io.to(roomCode).emit('gameOver', { winner: winnerName });
                     
-                    room.bases = { 0: 10, 1: 10 }; room.creepers = {}; room.towers = []; room.lasers = []; room.aoeBlasts = [];
+                    room.bases = { 0: 10, 1: 10 }; room.creepers = {}; room.towers = []; room.lasers = []; room.aoeBlasts = []; room.deathEvents = [];
                     room.gameState = 'waiting';
+                    room.mapIndex = Math.floor(Math.random() * mapPool.length);
+                    io.to(roomCode).emit('initMap', { waypoints: mapPool[room.mapIndex] });
+
                     for(let pid in room.players) { room.players[pid].points = 0; room.players[pid].isReady = false; }
                     io.to(roomCode).emit('lobbyUpdate', room.players);
                     break; 
@@ -272,17 +314,27 @@ setInterval(() => {
                     if (distance < hitDistance) {
                         let c1Damage = c1.hp; let c2Damage = c2.hp;
                         c1.hp -= c2Damage; c2.hp -= c1Damage;
-                        if (c1.hp <= 0) delete room.creepers[creeperIds[i]]; if (c2.hp <= 0) delete room.creepers[creeperIds[j]];
+                        if (c1.hp <= 0) {
+                            room.deathEvents.push({x: c1.x, y: c1.y, color: c1.color}); // <--- Log Death
+                            delete room.creepers[creeperIds[i]];
+                        }
+                        if (c2.hp <= 0) {
+                            room.deathEvents.push({x: c2.x, y: c2.y, color: c2.color}); // <--- Log Death
+                            delete room.creepers[creeperIds[j]];
+                        }
                     }
                 }
             }
         }
 
+        // Send state to clients AND include the deathEvents
         io.to(roomCode).emit('stateUpdate', { 
-            creepers: room.creepers, towers: room.towers, lasers: room.lasers, aoeBlasts: room.aoeBlasts, bases: room.bases, players: room.players 
+            creepers: room.creepers, towers: room.towers, lasers: room.lasers, aoeBlasts: room.aoeBlasts, bases: room.bases, players: room.players,
+            deaths: room.deathEvents // <--- Sent to client!
         });
+
+        room.deathEvents = []; // <--- Clear it out for the next frame
     }
 }, 1000 / 30); 
 
 server.listen(80, '0.0.0.0', () => { console.log('Running!'); });
-//server.listen(3000, () => { console.log('Game server running on http://localhost:3000'); });
