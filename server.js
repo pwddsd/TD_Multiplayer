@@ -337,4 +337,4 @@ setInterval(() => {
     }
 }, 1000 / 30); 
 
-server.listen(80, '0.0.0.0', () => { console.log('Running!'); });
+server.listen(3000, '0.0.0.0', () => { console.log('Running!'); });
