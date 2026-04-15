@@ -11,15 +11,15 @@ let rooms = {};
 const wordBanks = {
     easy: {
         points: 1, speedMultiplier: 0.6,
-        words: ["bug", "tag", "ram", "cpu", "bot", "run", "log", "net", "web", "app", "bit", "mac", "html", "pixel", "key", "enter", "mouse"]
+        words: ["byte", "code", "data", "disk", "edit", "file", "font", "gate", "grid", "hash", "host", "icon", "info", "java", "link", "load", "log", "main", "menu", "node", "path", "ping", "plot", "port", "root", "save", "scan", "site", "task", "text", "user", "view", "web", "wiki", "word", "apps", "back", "boot", "caps", "chip", "copy", "core", "dash", "desk", "dock", "drag", "drop", "fail", "feed", "find", "free", "help", "home", "keys", "list", "mail", "mode", "page", "peer", "plug"]
     },
     medium: {
         points: 2, speedMultiplier: 1.0,
-        words: ["server", "client", "python", "object", "array", "syntax", "kernel", "router", "binary", "computer", "C#", "motherboard"]
+        words: ["Python", "C#", "Binary", "Browser", "Buffer", "Client", "Cookie", "Cursor", "Device", "Domain", "Driver", "Ethernet", "Filter", "Folder", "Format", "Gaming", "Glitches", "Google", "Hacker", "Import", "Input", "Install", "Laptop", "Layout", "Memory", "Mirror", "Mobile", "Modem", "Module", "Monitor", "Network", "Object", "Online", "Output", "Packet", "pixel", "portal", "prompt", "Python", "Python3", "random", "remote", "Repair", "Router", "Screen", "Script", "Search", "sensor", "Server", "signal", "social", "source", "Status", "Stream", "switch", "system", "tablet", "update", "upload", "window"]
     },
     hard: {
         points: 4,  speedMultiplier: 1.2, 
-        words: ["algorithm", "javascript", "encryption", "middleware", "framework", "deployment", "repository", "parallax", "cache", "cryptography", "asynchronous", "infrastructure"]
+        words: ["Algorithm", "Architecture", "Bandwidth", "Back-end", "Blockchain", "Bluetooth", "Cache-Memory", "Cloud-Computing", "compiler", "Compression", "cryptography", "Cybersecurity", "database", "Debugging", "Decryption", "defragment", "Deployment", "Deprecated", "Development", "Digital-Twin", "Disruption", "Encryption", "Environment", "Execution", "Fiber-Optic", "Filesystem", "Firewall", "Framework", "Full-Stack", "Gigabyte", "Hardware", "Hyperlink", "Infrastructure", "Integration", "Interface", "JavaScript", "Kernel-Panic", "Keywords", "Mainframe", "Maintenance", "Malware", "Microchip", "Middleware", "Motherboard", "Multitasking", "Open-Source", "Operating-System", "Optimization", "overclocking", "parameters", "Peripheral", "Phishing", "Processor", "Protocol", "Redundancy", "repository", "Resolution", "scalability", "Virtualization", "Workstation"]
     }
 };
 
@@ -43,8 +43,8 @@ const unitStats = {
 };
 
 const towerStats = {
-    "basic": { cost: 10, range: 100, damage: 1, cooldown: 60, type: "single" }, 
-    "aoe":   { cost: 25, range: 80,  damage: 2, cooldown: 90, type: "aoe" }     
+    "basic": { cost: 10, range: 90, damage: 1, cooldown: 40, type: "single" }, 
+    "aoe":   { cost: 25, range: 100,  damage: 3, cooldown: 80, type: "aoe" }     
 };
 
 app.get('/', (req, res) => { res.sendFile(__dirname + '/index.html'); });
@@ -337,4 +337,4 @@ setInterval(() => {
     }
 }, 1000 / 30); 
 
-server.listen(3000, '0.0.0.0', () => { console.log('Running!'); });
+server.listen(80, '0.0.0.0', () => { console.log('Running!'); });
